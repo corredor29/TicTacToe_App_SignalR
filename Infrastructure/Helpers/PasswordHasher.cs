@@ -4,15 +4,15 @@ namespace Infrastructure.Helpers;
 
 public static class PasswordHasher
 {
-    private static readonly int SaltSize = 16;
-    private static readonly int HashSize = 20;
-    private static readonly int Iterations = 10000;
+    private const int SaltSize = 16;
+    private const int HashSize = 32;
+    private const int Iterations = 100000;
+    private static readonly HashAlgorithmName Algorithm = HashAlgorithmName.SHA256;
 
     public static string HashPassword(string password)
     {
         byte[] salt = RandomNumberGenerator.GetBytes(SaltSize);
-        var key = new Rfc2898DeriveBytes(password, salt, Iterations, HashAlgorithmName.SHA1);
-        var hash = key.GetBytes(HashSize);
+        var hash = Rfc2898DeriveBytes.Pbkdf2(password, salt, Iterations, Algorithm, HashSize);
 
         var hashBytes = new byte[SaltSize + HashSize];
         Array.Copy(salt, 0, hashBytes, 0, SaltSize);
@@ -24,16 +24,18 @@ public static class PasswordHasher
     public static bool VerifyPassword(string password, string base64Hash)
     {
         var hashBytes = Convert.FromBase64String(base64Hash);
+        if (hashBytes.Length != SaltSize + HashSize)
+        {
+            return false;
+        }
 
         var salt = new byte[SaltSize];
         Array.Copy(hashBytes, 0, salt, 0, SaltSize);
 
-        var key = new Rfc2898DeriveBytes(password, salt, Iterations, HashAlgorithmName.SHA1);
-        var hash = key.GetBytes(HashSize);
+        var hash = Rfc2898DeriveBytes.Pbkdf2(password, salt, Iterations, Algorithm, HashSize);
 
-        for (var i = 0; i < HashSize; i++)
-            if (hashBytes[i + SaltSize] != hash[i]) return false;
-
-        return true;
+        return CryptographicOperations.FixedTimeEquals(
+            hashBytes.AsSpan(SaltSize, HashSize),
+            hash);
     }
 }

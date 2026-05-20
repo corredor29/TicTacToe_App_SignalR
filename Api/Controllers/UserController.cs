@@ -30,15 +30,17 @@ public class UserController : ControllerBase
     }
 
     [HttpPost("login")]
-    public async Task<IActionResult> Login([FromBody] User userObj)
+    public async Task<IActionResult> Login([FromBody] LoginDto loginDto)
     {
-        if (userObj == null) return BadRequest();
+        if (loginDto == null) return BadRequest();
+        if (string.IsNullOrWhiteSpace(loginDto.Username) || string.IsNullOrWhiteSpace(loginDto.Password))
+            return BadRequest(new { message = "Username and password are required." });
 
-        var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Username == userObj.Username);
-        if (user == null) return NotFound(new { message = "User Not Found!!" });
+        var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Username == loginDto.Username);
+        if (user == null) return Unauthorized(new { message = "Invalid credentials." });
 
-        if (!PasswordHasher.VerifyPassword(userObj.Password!, user.Password!))
-            return NotFound(new { message = "Password is Incorrect!" });
+        if (!PasswordHasher.VerifyPassword(loginDto.Password, user.Password!))
+            return Unauthorized(new { message = "Invalid credentials." });
 
         _userConnectionService.AddUserToList(user.Username!);
 
@@ -54,21 +56,26 @@ public class UserController : ControllerBase
     }
 
     [HttpPost("register")]
-    public async Task<IActionResult> Register([FromBody] User userObj)
+    public async Task<IActionResult> Register([FromBody] RegisterDto registerDto)
     {
-        if (userObj == null) return BadRequest();
-        if (string.IsNullOrEmpty(userObj.Username) || string.IsNullOrEmpty(userObj.Password))
+        if (registerDto == null) return BadRequest();
+        if (string.IsNullOrWhiteSpace(registerDto.Username) || string.IsNullOrWhiteSpace(registerDto.Password))
             return BadRequest(new { message = "Username and password cannot be empty!" });
 
-        var exists = await _dbContext.Users.AnyAsync(u => u.Username == userObj.Username);
+        var username = registerDto.Username.Trim();
+        var exists = await _dbContext.Users.AnyAsync(u => u.Username == username);
         if (exists) return BadRequest(new { message = "Username already exists!!" });
 
-        var passwordMsg = CheckPasswordStrength(userObj.Password);
+        var passwordMsg = CheckPasswordStrength(registerDto.Password);
         if (!string.IsNullOrEmpty(passwordMsg)) return BadRequest(new { message = passwordMsg });
 
-        userObj.Password = PasswordHasher.HashPassword(userObj.Password);
+        var user = new User
+        {
+            Username = username,
+            Password = PasswordHasher.HashPassword(registerDto.Password)
+        };
 
-        await _dbContext.Users.AddAsync(userObj);
+        await _dbContext.Users.AddAsync(user);
         await _dbContext.SaveChangesAsync();
         return Ok(new { message = "Register Success!!" });
     }

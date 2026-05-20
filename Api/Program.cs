@@ -1,9 +1,11 @@
 using System.Data;
+using System.Security.Claims;
 using System.Text;
 using Api.Hubs;
 using Application.Interfaces;
 using Application.Services;
 using Infrastructure.Persistence;
+using Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -12,6 +14,10 @@ var builder = WebApplication.CreateBuilder(args);
 
 // DbContext
 builder.Services.AddDbContext<TicTacToeDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("PostgresStr")),
+    contextLifetime: ServiceLifetime.Scoped,
+    optionsLifetime: ServiceLifetime.Singleton);
+builder.Services.AddDbContextFactory<TicTacToeDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("PostgresStr")));
 
 // JWT Authentication
@@ -24,6 +30,22 @@ builder.Services.AddAuthentication(options =>
 {
     x.RequireHttpsMetadata = false;
     x.SaveToken = true;
+    x.Events = new JwtBearerEvents
+    {
+        OnMessageReceived = context =>
+        {
+            var accessToken = context.Request.Query["access_token"];
+            var path = context.HttpContext.Request.Path;
+
+            if (!string.IsNullOrWhiteSpace(accessToken) &&
+                path.StartsWithSegments("/hubs/connectionuser"))
+            {
+                context.Token = accessToken;
+            }
+
+            return Task.CompletedTask;
+        }
+    };
     x.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuerSigningKey = true,
@@ -31,6 +53,7 @@ builder.Services.AddAuthentication(options =>
         ValidateAudience = false,
         ValidateIssuer = false,
         ValidateLifetime = true,
+        NameClaimType = ClaimTypes.Name,
         ClockSkew = TimeSpan.Zero
     };
 });
@@ -51,6 +74,7 @@ builder.Services.AddCors(options =>
 
 // Application services
 builder.Services.AddSingleton<IUserConnectionService, UserConnectionService>();
+builder.Services.AddSingleton<IGameSessionService, GameSessionService>();
 builder.Services.AddSignalR();
 
 var app = builder.Build();
