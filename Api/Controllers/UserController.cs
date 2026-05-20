@@ -46,7 +46,7 @@ public class UserController : ControllerBase
         var newAccessToken = user.Token;
         var newRefreshToken = CreateRefreshToken();
         user.RefreshToken = newRefreshToken;
-        user.RefreshTokenExpiryTime = DateTime.Now.AddDays(5);
+        user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(5);
 
         await _dbContext.SaveChangesAsync();
 
@@ -102,14 +102,14 @@ public class UserController : ControllerBase
             return BadRequest(new { message = "Invalid access token." });
 
         var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Username == username);
-        if (user == null || user.RefreshToken != tokenDto.RefreshToken || user.RefreshTokenExpiryTime <= DateTime.Now)
+        if (user == null || user.RefreshToken != tokenDto.RefreshToken || user.RefreshTokenExpiryTime <= DateTime.UtcNow)
             return BadRequest(new { message = "Invalid refresh request." });
 
         var newAccessToken = CreateJwt(user);
         var newRefreshToken = CreateRefreshToken();
         user.Token = newAccessToken;
         user.RefreshToken = newRefreshToken;
-        user.RefreshTokenExpiryTime = DateTime.Now.AddDays(5);
+        user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(5);
 
         await _dbContext.SaveChangesAsync();
 
@@ -159,7 +159,7 @@ public class UserController : ControllerBase
         var tokenDescriptor = new SecurityTokenDescriptor
         {
             Subject = identity,
-            Expires = DateTime.Now.AddDays(1),
+            Expires = DateTime.UtcNow.AddDays(1),
             SigningCredentials = credentials
         };
 
