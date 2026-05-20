@@ -1,4 +1,6 @@
 using Application.Interfaces;
+using Domain.Dtos;
+using Domain.Enums;
 
 namespace Application.Services;
 
@@ -6,7 +8,7 @@ public class UserConnectionService : IUserConnectionService
 {
     // <key,value> = <username, ConnectionID>
     private static readonly Dictionary<string, string> Users = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly Dictionary<string, bool> OnlineUsers = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, OnlineUserState> OnlineUsers = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, List<string>> PrivateRooms = new(StringComparer.OrdinalIgnoreCase);
 
     public bool AddUserToList(string userToAdd)
@@ -26,7 +28,7 @@ public class UserConnectionService : IUserConnectionService
     {
         lock (OnlineUsers)
         {
-            OnlineUsers[userToAdd] = false;
+            OnlineUsers[userToAdd] = new OnlineUserState();
         }
     }
 
@@ -34,7 +36,11 @@ public class UserConnectionService : IUserConnectionService
     {
         lock (OnlineUsers)
         {
-            if (OnlineUsers.ContainsKey(user)) OnlineUsers[user] = true;
+            if (OnlineUsers.TryGetValue(user, out var state))
+            {
+                state.IsInPrivateRoom = true;
+                state.StatusId = (int)UserAvailabilityStatus.Playing;
+            }
         }
     }
 
@@ -42,7 +48,33 @@ public class UserConnectionService : IUserConnectionService
     {
         lock (OnlineUsers)
         {
-            if (OnlineUsers.ContainsKey(user)) OnlineUsers[user] = false;
+            if (OnlineUsers.TryGetValue(user, out var state))
+            {
+                state.IsInPrivateRoom = false;
+
+                if (state.StatusId == (int)UserAvailabilityStatus.Playing)
+                {
+                    state.StatusId = (int)UserAvailabilityStatus.Available;
+                }
+            }
+        }
+    }
+
+    public void SetUserStatus(string user, UserAvailabilityStatus status)
+    {
+        lock (OnlineUsers)
+        {
+            if (!OnlineUsers.TryGetValue(user, out var state))
+            {
+                state = new OnlineUserState();
+                OnlineUsers[user] = state;
+            }
+
+            state.StatusId = (int)status;
+            if (status != UserAvailabilityStatus.Playing)
+            {
+                state.IsInPrivateRoom = false;
+            }
         }
     }
 
@@ -84,7 +116,33 @@ public class UserConnectionService : IUserConnectionService
 
     public KeyValuePair<string, bool>[] GetOnlineUsers()
     {
-        lock (OnlineUsers) { return OnlineUsers.ToArray(); }
+        lock (OnlineUsers)
+        {
+            return OnlineUsers
+                .Select(x => new KeyValuePair<string, bool>(x.Key, x.Value.IsInPrivateRoom))
+                .ToArray();
+        }
+    }
+
+    public OnlineUserDto[] GetOnlineUsersWithStatus()
+    {
+        lock (OnlineUsers)
+        {
+            return OnlineUsers
+                .Select(x =>
+                {
+                    var status = UserAvailabilityStatusExtensions.FromId(x.Value.StatusId);
+                    return new OnlineUserDto
+                    {
+                        Username = x.Key,
+                        IsInPrivateRoom = x.Value.IsInPrivateRoom,
+                        StatusId = x.Value.StatusId,
+                        Status = status.ToDisplayName()
+                    };
+                })
+                .OrderBy(x => x.Username)
+                .ToArray();
+        }
     }
 
     public string? GetUserConnectionById(string connectionId)
@@ -122,8 +180,10 @@ public class UserConnectionService : IUserConnectionService
         }
     }
 
-    public void RemoveUserFromPrivateRoom(string user)
+    public string[] RemoveUserFromPrivateRoom(string user)
     {
+        var affectedUsers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         lock (PrivateRooms)
         {
             foreach (var room in PrivateRooms.Keys.ToList())
@@ -131,11 +191,40 @@ public class UserConnectionService : IUserConnectionService
                 if (PrivateRooms[room].Contains(user))
                 {
                     foreach (var item in PrivateRooms[room])
+                    {
                         SetOnlineUserOutPrivateRoom(item);
+                        affectedUsers.Add(item);
+                    }
 
                     PrivateRooms.Remove(room);
                 }
             }
         }
+
+        return affectedUsers.ToArray();
+    }
+
+    public bool IsUserInPrivateRoom(string user)
+    {
+        lock (OnlineUsers)
+        {
+            return OnlineUsers.TryGetValue(user, out var state) && state.IsInPrivateRoom;
+        }
+    }
+
+    public UserAvailabilityStatus GetUserStatus(string user)
+    {
+        lock (OnlineUsers)
+        {
+            return OnlineUsers.TryGetValue(user, out var state)
+                ? UserAvailabilityStatusExtensions.FromId(state.StatusId)
+                : UserAvailabilityStatus.Available;
+        }
+    }
+
+    private sealed class OnlineUserState
+    {
+        public bool IsInPrivateRoom { get; set; }
+        public int StatusId { get; set; } = (int)UserAvailabilityStatus.Available;
     }
 }

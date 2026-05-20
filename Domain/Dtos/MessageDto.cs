@@ -13,3 +13,10 @@ public class PrivateMessageDto
     public string? To { get; set; }
     public int Position { get; set; }
 }
+
+public class RematchDecisionDto
+{
+    public string? From { get; set; }
+    public string? To { get; set; }
+    public bool Accepted { get; set; }
+}
