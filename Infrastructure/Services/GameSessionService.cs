@@ -82,10 +82,33 @@ public class GameSessionService : IGameSessionService
 
         if (result.State != null)
         {
-            await UpsertGameAsync(result.State, isActive: result.State.Status == "InProgress");
+            await SaveGameStateAsync(result.State);
         }
 
         return result;
+    }
+
+    public async Task<GameStateDto> RestartGameAsync(string roomName)
+    {
+        await EnsureGameLoadedAsync(roomName);
+
+        GameStateDto newState;
+        lock (Games)
+        {
+            if (Games.TryGetValue(roomName, out var currentGame))
+            {
+                var restartedGame = new GameSession(roomName, currentGame.PlayerX, currentGame.PlayerO);
+                Games[roomName] = restartedGame;
+                newState = restartedGame.ToDto();
+            }
+            else
+            {
+                throw new InvalidOperationException("Game not found.");
+            }
+        }
+
+        await UpsertGameAsync(newState, isActive: true);
+        return newState;
     }
 
     public async Task CloseGameAsync(string roomName)
@@ -152,7 +175,7 @@ public class GameSessionService : IGameSessionService
         }
 
         var record = await GetLatestGameRecordAsync(roomName);
-        if (record == null || !record.IsActive)
+        if (record == null)
         {
             return;
         }
@@ -209,6 +232,89 @@ public class GameSessionService : IGameSessionService
         record.CompletedAtUtc = isActive ? null : now;
 
         await dbContext.SaveChangesAsync();
+    }
+
+    private async Task SaveGameStateAsync(GameStateDto state)
+    {
+        await using var dbContext = await _dbContextFactory.CreateDbContextAsync();
+        var record = await dbContext.GameSessions
+            .OrderByDescending(x => x.Id)
+            .FirstOrDefaultAsync(x => x.RoomName == state.RoomName && x.IsActive);
+
+        var now = DateTime.UtcNow;
+        if (record == null)
+        {
+            record = new GameSessionRecord
+            {
+                RoomName = state.RoomName,
+                CreatedAtUtc = now
+            };
+
+            await dbContext.GameSessions.AddAsync(record);
+        }
+
+        var isActive = state.Status == "InProgress";
+        record.PlayerX = state.PlayerX;
+        record.PlayerO = state.PlayerO;
+        record.CurrentTurnUser = state.CurrentTurnUser;
+        record.CurrentTurnSymbol = state.CurrentTurnSymbol;
+        record.BoardState = SerializeBoard(state.Board);
+        record.Status = state.Status;
+        record.Winner = state.Winner;
+        record.WinningSymbol = state.WinningSymbol;
+        record.WinningPositions = SerializePositions(state.WinningPositions);
+        record.LastMoveBy = state.LastMoveBy;
+        record.LastMovePosition = state.LastMovePosition;
+        record.IsActive = isActive;
+        record.UpdatedAtUtc = now;
+        record.CompletedAtUtc = isActive ? null : now;
+
+        if (!isActive)
+        {
+            await UpdateRankingAsync(dbContext, state);
+        }
+
+        await dbContext.SaveChangesAsync();
+    }
+
+    private static async Task UpdateRankingAsync(TicTacToeDbContext dbContext, GameStateDto state)
+    {
+        var users = await dbContext.Users
+            .Where(x => x.Username == state.PlayerX || x.Username == state.PlayerO)
+            .ToDictionaryAsync(x => x.Username!, StringComparer.OrdinalIgnoreCase);
+
+        if (!users.TryGetValue(state.PlayerX, out var playerX) || !users.TryGetValue(state.PlayerO, out var playerO))
+        {
+            return;
+        }
+
+        playerX.GamesPlayed++;
+        playerO.GamesPlayed++;
+
+        if (state.Status == "Draw")
+        {
+            playerX.Draws++;
+            playerO.Draws++;
+            return;
+        }
+
+        if (state.Status != "Won" || string.IsNullOrWhiteSpace(state.Winner))
+        {
+            return;
+        }
+
+        if (string.Equals(state.Winner, playerX.Username, StringComparison.OrdinalIgnoreCase))
+        {
+            playerX.Wins++;
+            playerO.Losses++;
+            return;
+        }
+
+        if (string.Equals(state.Winner, playerO.Username, StringComparison.OrdinalIgnoreCase))
+        {
+            playerO.Wins++;
+            playerX.Losses++;
+        }
     }
 
     private static string SerializeBoard(IEnumerable<string> board)

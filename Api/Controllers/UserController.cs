@@ -3,7 +3,9 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using Domain.Enums;
 using Application.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Domain.Dtos;
 using Domain.Entities;
 using Infrastructure.Helpers;
@@ -43,7 +45,9 @@ public class UserController : ControllerBase
             return Unauthorized(new { message = "Invalid credentials." });
 
         _userConnectionService.AddUserToList(user.Username!);
+        _userConnectionService.SetUserStatus(user.Username!, UserAvailabilityStatus.Available);
 
+        user.StatusId = (int)UserAvailabilityStatus.Available;
         user.Token = CreateJwt(user);
         var newAccessToken = user.Token;
         var newRefreshToken = CreateRefreshToken();
@@ -72,7 +76,8 @@ public class UserController : ControllerBase
         var user = new User
         {
             Username = username,
-            Password = PasswordHasher.HashPassword(registerDto.Password)
+            Password = PasswordHasher.HashPassword(registerDto.Password),
+            StatusId = (int)UserAvailabilityStatus.Available
         };
 
         await _dbContext.Users.AddAsync(user);
@@ -121,6 +126,92 @@ public class UserController : ControllerBase
         await _dbContext.SaveChangesAsync();
 
         return Ok(new TokenDto { AccessToken = newAccessToken, RefreshToken = newRefreshToken });
+    }
+
+    [Authorize]
+    [HttpGet("me/status")]
+    public IActionResult GetMyStatus()
+    {
+        var username = User.Identity?.Name;
+        if (string.IsNullOrWhiteSpace(username))
+        {
+            return Unauthorized(new { message = "Unauthorized user." });
+        }
+
+        var status = _userConnectionService.GetUserStatus(username);
+        var result = UserStatusDto.Create(
+            username,
+            isOnline: true,
+            isInPrivateRoom: _userConnectionService.IsUserInPrivateRoom(username),
+            status: status);
+
+        return Ok(result);
+    }
+
+    [Authorize]
+    [HttpPut("me/status")]
+    public async Task<IActionResult> UpdateMyStatus([FromBody] UpdateUserStatusDto request)
+    {
+        var username = User.Identity?.Name;
+        if (string.IsNullOrWhiteSpace(username))
+        {
+            return Unauthorized(new { message = "Unauthorized user." });
+        }
+
+        if (!UserAvailabilityStatusExtensions.IsValid(request.StatusId))
+        {
+            return BadRequest(new { message = "Invalid status. Use 1=Disponible, 2=Jugando, 3=No molestar." });
+        }
+
+        if (_userConnectionService.IsUserInPrivateRoom(username) && request.StatusId != (int)UserAvailabilityStatus.Playing)
+        {
+            return BadRequest(new { message = "No puedes cambiar a otro estado mientras la partida sigue activa." });
+        }
+
+        var user = await _dbContext.Users.FirstOrDefaultAsync(x => x.Username == username);
+        if (user == null)
+        {
+            return NotFound(new { message = "User not found." });
+        }
+
+        user.StatusId = request.StatusId;
+        _userConnectionService.SetUserStatus(username, (UserAvailabilityStatus)request.StatusId);
+
+        await _dbContext.SaveChangesAsync();
+
+        var result = UserStatusDto.Create(
+            username,
+            isOnline: true,
+            isInPrivateRoom: _userConnectionService.IsUserInPrivateRoom(username),
+            status: (UserAvailabilityStatus)request.StatusId);
+
+        return Ok(result);
+    }
+
+    [HttpGet("ranking")]
+    public async Task<IActionResult> GetRanking()
+    {
+        var ranking = await _dbContext.Users
+            .AsNoTracking()
+            .OrderByDescending(x => x.Wins * 3 + x.Draws)
+            .ThenByDescending(x => x.Wins)
+            .ThenBy(x => x.Losses)
+            .ThenBy(x => x.Username)
+            .Select(x => new RankingEntryDto
+            {
+                Username = x.Username ?? string.Empty,
+                Wins = x.Wins,
+                Losses = x.Losses,
+                Draws = x.Draws,
+                GamesPlayed = x.GamesPlayed,
+                Score = (x.Wins * 3) + x.Draws,
+                WinRate = x.GamesPlayed == 0
+                    ? 0
+                    : Math.Round((decimal)x.Wins * 100 / x.GamesPlayed, 2)
+            })
+            .ToListAsync();
+
+        return Ok(ranking);
     }
 
     private ClaimsPrincipal GetPrincipleFromExpiredToken(string token)
