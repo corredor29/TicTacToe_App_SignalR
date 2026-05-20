@@ -68,7 +68,15 @@ public class UserConnectionService : IUserConnectionService
     {
         lock (Users)
         {
-            if (Users.ContainsKey(user)) Users[user] = connectionId;
+            if (!Users.ContainsKey(user))
+            {
+                Users[user] = connectionId;
+                AddUserToOnlineUserList(user);
+            }
+            else
+            {
+                Users[user] = connectionId;
+            }
         }
     }
 
