@@ -11,21 +11,28 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Api.Controllers;
-
+// Define la url base del controlador 
 [Route("api/auth")]
+// le da a entender a .net que esa clase es un controlador de la api
 [ApiController]
+
 public class AuthController : ControllerBase
 {
+    // Es un atributo privado q da accerso a la base de datos 
+    // el campo readonly se usa para decir que el campo solo se puede usar una vez y no se puede modificar 
     private readonly TicTacToeDbContext _dbContext;
+    // Atributo privado que da acceso a la configuracion del proyecto como jwt y google 
     private readonly IConfiguration _configuration;
-
+    
+    // Constructor que sirve para la inyeccion de dependencias en la base de datos y la configuracion
     public AuthController(TicTacToeDbContext dbContext, IConfiguration configuration)
     {
         _dbContext = dbContext;
         _configuration = configuration;
     }
-
+    // Metodo que responde peticiones desde mi url de gogle 
     [HttpPost("google")]
+    
     public async Task<IActionResult> GoogleLogin([FromBody] GoogleTokenDto dto)
     {
         try
