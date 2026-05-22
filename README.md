@@ -342,5 +342,9 @@ El orden del ranking prioriza:
 3. menor numero de derrotas
 4. nombre de usuario
 
+### Enlaces
 
+https://tictactoe-app-signalr.onrender.com
+https://github.com/corredor29/-TicTacToe_App_SignalR_frontend-
+https://tictactoe-app-signalr-frontend.onrender.com
 
